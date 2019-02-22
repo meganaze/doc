@@ -54,7 +54,80 @@ Pour plus d'informations et d'options sur la création d'archives, consultez `yu
 
 #### Configuration spécifique à certaines apps
 
-Certaines apps comme Nextcloud sont potentiellement rattachées à des quantités importantes de données, qui ne sont pas sauvegardées par défaut. Dans ce cas, on dit que l'app "sauvegarde uniquement le core" (de l'app). Néanmoins, il est possible d'activer la sauvegarde de toutes les données de cette application avec (dans le cas de Nextcloud) `yunohost app setting nextcloud backup_core_only -v ''`. Soyez prudent : en fonction des données stockées dans Nextcloud, il se peut que l'archive que vous obtenez ensuite devienne énorme...
+Certaines apps comme Nextcloud sont potentiellement rattachées à des quantités importantes de données. Il est possible de ne pas les sauvegarder par défaut. Dans ce cas, on dit que l'app "sauvegarde uniquement le core" (de l'app). 
+
+Pour activer la sauvegarde de toutes les données de cette application vous pouvez utiliser (dans le cas de Nextcloud) `yunohost app setting nextcloud backup_core_only -v ''`. Cette commande ajoute `backup_core_only:` dans `etc/yunohost/apps/nextcloud/settings.yml` Soyez prudent : en fonction des données stockées dans Nextcloud, il se peut que l'archive que vous obtenez ensuite devienne énorme...
+
+Pour désactiver la sauvegarde de toutes les données de cette application vous pouvez utiliser (dans le cas de Nextcloud) `yunohost app setting nextcloud backup_core_only -v '1'`. Cette commande ajoute `backup_core_only: '1'` dans `etc/yunohost/apps/nextcloud/settings.yml` Soyez prudent : il vous faudra alors sauvegarder vous même les données des utilisateurs de nextcloud. Choisir ce type de sauvegarde vous permettra de mettre en place manuellement des sauvegardes incrémentielles ou différentielles (que yunohost ne permet pas encore de faire automatiquement).
+
+Notes : pour exclure tous le /home du backup utiliser l'argument  : ```bash--system conf_ssh conf_ynh_firewall data_mail conf_cron conf_ynh_certs conf_ynh_mysql conf_xmpp conf_ynh_currenthost conf_nginx conf_ssowat conf_ldap``` (liste tous les hook du système a l'exeption de celui des données de /home)
+
+#### Exemple de script de sauvegardes incrémentielles (et cryptés)
+
+Le script suivant permet de sauvegarder `/home/*` de facon incrémentielle sur un support de votre choix, ainsi que de faire un backup du système et des apps de yunohost (non incrémentielle). Montez votre suport de sauvegarde dans /mnt pour être tranquille. 
+
+Pour les sauvegardes distantes il est possible d'utiliser un contener crypté. Par exemple un contener luks.
+
+```bash
+#!/bin/sh
+
+## VARS
+source=/home/ # must contain the trailing slash
+target=/path/to/backup/folder  # must contain the trailing slash
+date=`date '+%Y-%m-%d_%Hh%Mm'`
+demonte=/path/to/backup/folder/demonte
+
+# Mount device
+mount /dev/sdXX /path/to/backup/folder 
+
+# OR Mount luks container
+cryptsetup --key-file /home/qlfacab/backup/lukkey luksOpen /path/to/container containername
+mount /dev/mapper/containername /path/to/backup/folder  
+
+# Check disk is mounted : if folder "demonte" exit in the mount path that mean there is nothing mounted in this path -> the script stop
+if [ -d "$demonte" ]
+  then echo "Connecter le disque de sauvegarde !" 
+  exit
+fi
+
+# Check if subfolders exists
+if [ ! -d "$target"history ]
+  then mkdir "$target"history
+fi
+if [ ! -d "$target"latest ]
+  then mkdir "$target"latest
+fi
+
+# Delete backups older than 60 days !!be sure about the path - test before lauching script!!
+#find /path/to/backup/folder/yunohost -maxdepth 1 -type d -mtime +60 -exec rm -r {} \;
+#find /path/to/backup/folder/history -maxdepth 1 -type d -mtime +60 -exec rm -r {} \;
+
+
+## Ceate yunohost backup (systeme and apps only, /home excluded)
+mkdir /path/to/backup/folder/yunohost/"${date}"
+yunohost backup create --apps --system conf_ssh conf_ynh_firewall data_mail conf_cron conf_ynh_certs conf_ynh_mysql conf_xmpp conf_ynh_currenthost conf_nginx conf_ssowat conf_ldap --debug --output-directory /path/to/backup/folder/yunohost/"${date}"
+
+## Créé backup  de /home
+rsync \
+  --exclude-from=/path/to/file/with/list/of/folder/to/be/excluded.txt \
+  --progress \
+  --verbose \
+  --archive \
+  --human-readable \
+  --delete \
+  --delete-excluded \
+  -HAX \
+  "$source" \
+  "${target}"latest
+
+## Backup the backup 
+cp -al "${target}"latest "${target}"history/"${date}"
+
+### Umount if necessary 
+```
+Pour rendre le script exécutable : `chmod - x chemin/vers/le/script`
+Ensuite pour lancer le script régulièrement, il suffit d'éditer cron avec`crontab -e`. Par exemple, si vous ajoutez la ligne `* 1 * * * bash /chemin/du/script` la sauvegarde de yunohost et des fichiers utilisateurs aura lieux tous les jours à 1h du matin.
+ 
 
 Télécharger et téléverser des sauvegardes
 -----------------------------------------
